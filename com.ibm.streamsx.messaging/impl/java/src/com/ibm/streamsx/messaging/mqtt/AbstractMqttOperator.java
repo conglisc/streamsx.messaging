@@ -23,6 +23,8 @@ import com.ibm.streams.operator.compile.OperatorContextChecker;
 import com.ibm.streams.operator.log4j.LogLevel;
 import com.ibm.streams.operator.log4j.LoggerNames;
 import com.ibm.streams.operator.log4j.TraceLevel;
+import com.ibm.streams.operator.metrics.Metric;
+import com.ibm.streams.operator.model.CustomMetric;
 import com.ibm.streams.operator.model.Parameter;
 import com.ibm.streams.operator.state.ConsistentRegionContext;
 
@@ -43,6 +45,7 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 	public static final String PARAMNAME_COMMAND_TIMEOUT = "commandTimeout"; //$NON-NLS-1$
 	public static final String PARAMNAME_KEEP_ALIVE = "keepAliveInterval"; //$NON-NLS-1$
 	public static final String PARAMNAME_DATA_ATTRIBUTE_NAME = "dataAttributeName"; //$NON-NLS-1$
+	public static final String PARAMNAME_SSL_PROTOCOL = "sslProtocol"; //$NON-NLS-1$
 
 	static Logger TRACE = Logger.getLogger(AbstractMqttOperator.class);
 
@@ -56,6 +59,7 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 	private String trustStorePassword;
 	private String keyStore;
 	private String keyStorePassword;
+	private String sslProtocol = IMqttConstants.DEFAULT_SSL_PROTOCOL;
 	
 	private String clientID;
 	private String userID;
@@ -65,9 +69,26 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 	
 	private long commandTimeout = IMqttConstants.UNINITIALIZED_COMMAND_TIMEOUT;
 	private int keepAliveInterval = IMqttConstants.UNINITIALIZED_KEEP_ALIVE_INTERVAL;
+	
+	// Metrics keeping track of connection handling
+	// nConnectionLost is number of lost connections to current MQTT server
+	// isConnected indicates if operator currently connected to MQTT server, a value of 1 indicates it is connected and a value of 0 indicates it is not connected.
+	
+	Metric nConnectionLost;
+	Metric isConnected;
 
 	public AbstractMqttOperator() {
 		super();
+	}
+	
+	@CustomMetric(kind = Metric.Kind.COUNTER, description="The number of lost connections to current MQTT server.")
+	public void setnConnectionLost(Metric nConnectionLost) {
+		this.nConnectionLost = nConnectionLost;
+	}
+
+	@CustomMetric(kind = Metric.Kind.GAUGE, description="Indicates if operator currently connected to MQTT server, a value of 1 indicates it is connected and a value of 0 indicates it is not connected.")
+	public void setIsConnected(Metric isConnected) {
+		this.isConnected = isConnected;
 	}
 
 	@ContextCheck(compile = true, runtime = false)
@@ -246,6 +267,9 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 				sslProperties.setProperty(
 						IMqttConstants.SSK_TRUST_STORE_PASSWORD, trustStorePw);
 			}
+			
+			sslProperties.setProperty(IMqttConstants.SSL_PROTOCOL, getSslProtocol());
+			
 			client.setSslProperties(sslProperties);
 		}
 	}
@@ -286,7 +310,16 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 		this.trustStorePassword = trustStorePassword;
 	}
 	
-    public String getClientID() {
+    public String getSslProtocol() {
+		return sslProtocol;
+	}
+
+    @Parameter(name = PARAMNAME_SSL_PROTOCOL, optional = true, description = SPLDocConstants.PARAM_SSL_PROTOCOL_DESC)
+	public void setSslProtocol(String sslProtocol) {
+		this.sslProtocol = sslProtocol;
+	}
+
+	public String getClientID() {
 		return clientID;
 	}
 
@@ -400,12 +433,14 @@ public abstract class AbstractMqttOperator extends AbstractOperator {
 	}
 
 	protected String toAbsolute(String path) {
-		if (path != null && !path.startsWith("/")) //$NON-NLS-1$
-		{
-			File appDir = getOperatorContext().getPE().getApplicationDirectory();
-			return appDir.getAbsolutePath() + "/" + path; //$NON-NLS-1$
-		}
-		return path;
+            if (path == null)
+                return null;
+            File fPath = new File(path);
+            if (!fPath.isAbsolute()) {
+                File appDir = getOperatorContext().getPE().getApplicationDirectory();
+                fPath = new File(appDir, fPath.getPath());
+            }
+            return fPath.getAbsolutePath();
 	}
 
 	/**

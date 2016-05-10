@@ -17,12 +17,14 @@ import java.util.concurrent.TimeoutException;
 import com.ibm.streams.operator.OperatorContext;
 import com.ibm.streams.operator.OutputTuple;
 import com.ibm.streams.operator.StreamingOutput;
+import com.ibm.streams.operator.OperatorContext.ContextCheck;
+import com.ibm.streams.operator.compile.OperatorContextChecker;
 import com.ibm.streams.operator.logging.TraceLevel;
 import com.ibm.streams.operator.model.OutputPortSet;
 import com.ibm.streams.operator.model.OutputPorts;
 import com.ibm.streams.operator.model.Parameter;
 import com.ibm.streams.operator.model.PrimitiveOperator;
-
+import com.ibm.streams.operator.state.ConsistentRegionContext;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.Consumer;
 import com.rabbitmq.client.DefaultConsumer;
@@ -35,15 +37,25 @@ import java.util.logging.Logger;
  */
 @OutputPorts(@OutputPortSet(cardinality = 1, optional = false, description = "Messages received from Kafka are sent on this output port."))
 @PrimitiveOperator(name = "RabbitMQSource", description = RabbitMQSource.DESC)
-public class RabbitMQSource extends RabbitBaseOper {
+public class RabbitMQSource extends RabbitMQBaseOper {
 
 	private List<String> routingKeys = new ArrayList<String>();
 	
-	private final Logger trace = Logger.getLogger(RabbitBaseOper.class
+	private final Logger trace = Logger.getLogger(RabbitMQSource.class
 			.getCanonicalName());
 	
 	private Thread processThread;
 	private String queueName = "";
+	
+	//consistent region checks
+	@ContextCheck(compile = true)
+	public static void checkInConsistentRegion(OperatorContextChecker checker) {
+		ConsistentRegionContext consistentRegionContext = 
+				checker.getOperatorContext().getOptionalContext(ConsistentRegionContext.class);
+		if (consistentRegionContext != null){
+			checker.setInvalidContext("This operator cannot be the start of a consistent region.", null);
+		}
+	}
 	
 	@Override
 	public synchronized void initialize(OperatorContext context)
@@ -68,8 +80,8 @@ public class RabbitMQSource extends RabbitBaseOper {
 							produceTuples();
 							// rabbitMQWrapper.Consume();
 						} catch (Exception e) {
-							e.printStackTrace(); // Logger.getLogger(this.getClass()).error("Operator error",
-													// e);
+							e.printStackTrace();
+							trace.log(TraceLevel.ERROR, e.getMessage());
 						}
 					}
 
@@ -162,7 +174,6 @@ public class RabbitMQSource extends RabbitBaseOper {
 				} 				
 				
 				if (messageHeaderAH.isAvailable()){
-					System.out.println("Trying to print headers...");
 					Map<String, Object> msgHeader = properties.getHeaders();
 					if (msgHeader != null && !msgHeader.isEmpty()){
 						Map<String, String> headers = new HashMap<String,String>();
